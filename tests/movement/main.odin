@@ -10,7 +10,6 @@ import sg "shared:sokol/gfx"
 import stime "shared:sokol/time"
 import sdtx "shared:sokol/debugtext"
 import shelpers "shared:sokol/helpers"
-import snake_shader "shader"
 
 default_context: runtime.Context
 
@@ -30,17 +29,8 @@ State :: struct {
     game_over: bool,
     food_pos: Vec2i,
 
-    // Adding a flag to handle key press
     key_pressed: bool,
-
-    // Rendering
-    head_pixels: []u32,
-    body_pixels: []u32,
-    tail_pixels: []u32,
-    food_pixels: []u32,
-
-    bind: sg.Bindings,
-    pip: sg.Pipeline,
+    pass_action: sg.Pass_Action,
 }
 
 state: State
@@ -81,7 +71,7 @@ restart :: proc() {
     place_food()
 }
 
-init :: proc() {
+init :: proc "c" () {
     context = default_context
 
     sg.setup({
@@ -101,97 +91,25 @@ init :: proc() {
     }
     sdtx.setup(sdtx_desc)
 
-    // Initialize our game state
-    state.tick_timer = TICK_RATE
-
-    // Create placeholder textures for our sprites
-    // In a real game, you'd load these from files
-    state.head_pixels = make([]u32, CELL_SIZE * CELL_SIZE)
-    state.body_pixels = make([]u32, CELL_SIZE * CELL_SIZE)
-    state.tail_pixels = make([]u32, CELL_SIZE * CELL_SIZE)
-    state.food_pixels = make([]u32, CELL_SIZE * CELL_SIZE)
-
-    // Create simple colored pixels for the sprites
-    for i in 0..<len(state.head_pixels) {
-        state.head_pixels[i] = 0xFF00FF00  // Green for head
-        state.body_pixels[i] = 0xFF008800  // Darker green for body
-        state.tail_pixels[i] = 0xFF005500  // Even darker green for tail
-        state.food_pixels[i] = 0xFFFF0000  // Red for food
-    }
-
-    // Set up the rendering pipeline and textures
-    img_desc := sg.Image_Desc{
-        width = CELL_SIZE,
-        height = CELL_SIZE,
-        pixel_format = .RGBA8,
-    }
-
-    // Create all our texture images
-    head_img_desc := img_desc
-    head_img_desc.data.subimage[0][0] = sg.Range{
-        ptr = raw_data(state.head_pixels),
-        size = size_of(u32) * len(state.head_pixels),
-    }
-    head_img := sg.make_image(head_img_desc)
-
-    body_img_desc := img_desc
-    body_img_desc.data.subimage[0][0] = sg.Range{
-        ptr = raw_data(state.body_pixels),
-        size = size_of(u32) * len(state.body_pixels),
-    }
-    body_img := sg.make_image(body_img_desc)
-
-    tail_img_desc := img_desc
-    tail_img_desc.data.subimage[0][0] = sg.Range{
-        ptr = raw_data(state.tail_pixels),
-        size = size_of(u32) * len(state.tail_pixels),
-    }
-    tail_img := sg.make_image(tail_img_desc)
-
-    food_img_desc := img_desc
-    food_img_desc.data.subimage[0][0] = sg.Range{
-        ptr = raw_data(state.food_pixels),
-        size = size_of(u32) * len(state.food_pixels),
-    }
-    food_img := sg.make_image(food_img_desc)
-
-    // Initialize pipeline
-    pip_desc := sg.Pipeline_Desc{
-        layout = {
-            attrs = {
-                0 = { format = .FLOAT2 },  // position
-                1 = { format = .FLOAT2 },  // texcoord
-                2 = { format = .FLOAT4 },  // color
-            },
-        },
-        index_type = .UINT16,
-        cull_mode = .BACK,
+    state.pass_action = {
         colors = {
-            0 = { blend = { enabled = true,
-            src_factor_rgb = .SRC_ALPHA,
-            dst_factor_rgb = .ONE_MINUS_SRC_ALPHA }},
+            0 = { load_action = .CLEAR, clear_value = { 0.3, 0.2, 0.3, 1.0 } },
         },
     }
 
-    state.pip = sg.make_pipeline(pip_desc)
-
-    // Set up bindings
-    state.bind.images[0] = head_img
+    state.tick_timer = TICK_RATE
 
     restart()
 }
 
-cleanup :: proc() {
-    delete(state.head_pixels)
-    delete(state.body_pixels)
-    delete(state.tail_pixels)
-    delete(state.food_pixels)
-
+cleanup :: proc "c" () {
     sdtx.shutdown()
     sg.shutdown()
 }
 
-event :: proc(ev: ^sapp.Event) {
+event :: proc "c" (ev: ^sapp.Event) {
+    context = default_context
+
     if ev.type == .KEY_DOWN {
         #partial switch ev.key_code {
         case .UP:
@@ -220,8 +138,9 @@ event :: proc(ev: ^sapp.Event) {
     }
 }
 
-frame :: proc() {
-// Update game logic
+frame :: proc "c" () {
+    context = default_context
+    // Update game logic
     if !state.game_over {
         state.tick_timer -= sapp.frame_duration()
     }
@@ -255,55 +174,49 @@ frame :: proc() {
         state.tick_timer = TICK_RATE + state.tick_timer
     }
 
-    // Render frame
-    sg.begin_default_pass({
-        color = {0.3, 0.2, 0.3, 1.0},
-        depth = 1.0,
-    }, sapp.width(), sapp.height())
+    width, height := sapp.width(), sapp.height()
+    sg.begin_pass(sg.Pass{action = state.pass_action})
 
-    // Draw elements using sokol-debugtext for simplicity
-    sdtx.canvas(f32(sapp.width()), f32(sapp.height()))
+    sdtx.canvas(f32(width), f32(height))
+    sdtx.origin(0, 0)
     sdtx.font(0)
-    sdtx.pos(4, 4)
 
-    // Draw food
-    sdtx.color(1.0, 0.0, 0.0, 1.0)  // Red
-    food_x := state.food_pos.x * CELL_SIZE
-    food_y := state.food_pos.y * CELL_SIZE
-    sdtx.printf("F")
+    sdtx.color3f(1.0, 0.0, 0.0)  // Red
+    food_x := state.food_pos.x * CELL_SIZE / 4
+    food_y := state.food_pos.y * CELL_SIZE / 4
+    sdtx.pos(f32(food_x), f32(food_y))
+    sdtx.puts("F")
 
-    // Draw snake
     for i in 0..<state.snake_length {
-        x := state.snake[i].x * CELL_SIZE
-        y := state.snake[i].y * CELL_SIZE
+        x := state.snake[i].x * CELL_SIZE / 4
+        y := state.snake[i].y * CELL_SIZE / 4
 
         if i == 0 {
-            sdtx.color(0.0, 1.0, 0.0, 1.0)  // Green for head
-            sdtx.pos(x, y)
-            sdtx.printf("H")
+            sdtx.color3f(0.0, 1.0, 0.0)  // Green for head
+            sdtx.pos(f32(x), f32(y))
+            sdtx.puts("H")
         } else if i == state.snake_length - 1 {
-            sdtx.color(0.0, 0.33, 0.0, 1.0)  // Dark green for tail
-            sdtx.pos(x, y)
-            sdtx.printf("T")
+            sdtx.color3f(0.0, 0.33, 0.0)  // Dark green for tail
+            sdtx.pos(f32(x), f32(y))
+            sdtx.puts("T")
         } else {
-            sdtx.color(0.0, 0.66, 0.0, 1.0)  // Medium green for body
-            sdtx.pos(x, y)
-            sdtx.printf("B")
+            sdtx.color3f(0.0, 0.66, 0.0)  // Medium green for body
+            sdtx.pos(f32(x), f32(y))
+            sdtx.puts("B")
         }
     }
 
-    // Draw game info
     if state.game_over {
-        sdtx.color(1.0, 0.0, 0.0, 1.0)  // Red
+        sdtx.color3f(1.0, 0.0, 0.0)  // Red
         sdtx.pos(4, 24)
-        sdtx.printf("Game Over!")
-        sdtx.color(1.0, 1.0, 1.0, 1.0)  // White
+        sdtx.puts("Game Over!")
+        sdtx.color3f(1.0, 1.0, 1.0)  // White
         sdtx.pos(4, 34)
-        sdtx.printf("Press Enter to play again")
+        sdtx.puts("Press Enter to play again")
     }
 
     score := state.snake_length - 3
-    sdtx.color(0.7, 0.7, 0.7, 1.0)  // Gray
+    sdtx.color3f(0.7, 0.7, 0.7)  // Gray
     sdtx.pos(4, CANVAS_SIZE - 14)
     sdtx.printf("Score: %v", score)
 
@@ -320,7 +233,6 @@ main :: proc() {
         event_cb = event,
         width = WINDOW_SIZE,
         height = WINDOW_SIZE,
-        gl_force_gles2 = true,
         window_title = "Snake - Sokol",
     }
     sapp.run(app_desc)
