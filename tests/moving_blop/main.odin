@@ -5,6 +5,7 @@ import slog "shared:sokol/log"
 import sg "shared:sokol/gfx"
 import sapp "shared:sokol/app"
 import sglue "shared:sokol/glue"
+import stbi "vendor:stb/image"
 import "core:math/linalg"
 import "core:log"
 import m "../math"
@@ -13,6 +14,7 @@ Vec2 :: [2]f32
 
 ATTR_blop :: enum u32 {
     position = 0,
+    texcoord0,
     color0,
 }
 
@@ -22,6 +24,7 @@ state: struct {
     pip: sg.Pipeline,
     bind: sg.Bindings,
     movement_speed: f32,
+    blop: sg.Image,
 }
 
 init :: proc "c" () {
@@ -34,15 +37,28 @@ init :: proc "c" () {
     state.position = {0.0, 0.0}
     state.movement_speed = 0.2
 
-    vertices := [?]f32 {
-        -0.3, -0.3,       1.0, 1.0, 1.0, 1.0,
-        0.3, -0.3,       1.0, 1.0, 1.0, 1.0,
-        0.3,  0.3,       1.0, 1.0, 1.0, 1.0,
-        -0.3,  0.3,       1.0, 1.0, 1.0, 1.0,
+    state.blop = load_image("blop_1.png")
+
+    Vertex_Data :: struct {
+        pos: Vec2,
+        col: sg.Color,
+        uv: Vec2,
     }
+
+    WHITE :: sg.Color { 1, 1, 1, 1 }
+
+    vertices := [?]f32 {
+        -0.3, -0.3,       0.0, 1.0,       1.0, 1.0, 1.0, 1.0,
+        0.3, -0.3,       1.0, 1.0,       1.0, 1.0, 1.0, 1.0,
+        0.3,  0.3,       1.0, 0.0,       1.0, 1.0, 1.0, 1.0,
+        -0.3,  0.3,       0.0, 0.0,       1.0, 1.0, 1.0, 1.0,
+    }
+
     state.bind.vertex_buffers[0] = sg.make_buffer({
         data = { ptr = &vertices, size = size_of(vertices) },
     })
+
+    state.bind.images[0] = state.blop
 
     indices := [?]u16 {
         0, 1, 2,
@@ -53,14 +69,16 @@ init :: proc "c" () {
         data = { ptr = &indices, size = size_of(indices) },
     })
 
+
     state.pip = sg.make_pipeline({
         shader = sg.make_shader(blop_shader_desc(sg.query_backend())),
         layout = {
             buffers = {
-                0 = { stride = 24 },
+                0 = { stride = 32 },
             },
             attrs = {
                 ATTR_blop.position = { format = .FLOAT2 },
+                ATTR_blop.texcoord0 = { format = .FLOAT2 },
                 ATTR_blop.color0 = { format = .FLOAT4 },
             },
         },
@@ -77,7 +95,6 @@ frame :: proc "c" () {
     context = runtime.default_context()
     frame_time := sapp.frame_duration()
     move_input: Vec2
-
 
     if key_down[.W] do move_input.y += 0.1
     if key_down[.S] do move_input.y -= 0.1
@@ -149,4 +166,28 @@ main :: proc () {
         icon = { sokol_default = true },
         logger = { func = slog.func },
     })
+}
+
+load_image :: proc(filename: cstring) -> sg.Image {
+    w, h : i32
+    pixels := stbi.load(filename, &w, &h, nil, 4)
+
+    image := sg.make_image({
+        width = w,
+        height = h,
+        pixel_format = .RGBA8,
+        data = {
+            subimage = {
+                0 = {
+                    0 = {
+                        ptr = pixels,
+                        size = uint(w * h * 4)
+                    }
+                }
+            }
+        }
+    })
+    stbi.image_free(pixels)
+
+    return image
 }
